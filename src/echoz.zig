@@ -16,23 +16,33 @@ test "Router" {
     // r.GET("/hello", handle);
 
     var server = http.Server.init(alloc, .{});
-    try server.listen(try net.Address.parseIp("127.0.0.1", 2137));
-    var rer = try server.accept(.{ .allocator = alloc });
-    try r.handle(&rer);
+    _ = server;
+    // try server.listen(try net.Address.parseIp("127.0.0.1", 2137));
+    // var rer = try server.accept(.{ .allocator = alloc });
+    // try r.handle(&rer);
 }
 
 test "Trie" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const alloc = gpa.allocator();
-
-    var t = tr.Tire([]const u8, i32).init(alloc, eqqq);
-    var keys = std.ArrayList([]const u8).init(alloc);
-    var split = std.mem.split(u8, "o/k", "/");
-    while (split.next()) |x| {
-        try keys.append(x);
-    }
-    try t.insert(keys.items, 2137);
+    _ = @import("./Trie.zig");
 }
+// test "Trie" {
+//     // _ = @import("./Trie.zig");
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     const alloc = gpa.allocator();
+
+//     var t = tr.Tire([]const u8, i32).init(alloc, eqqq);
+//     var keys = std.ArrayList([]const u8).init(alloc);
+//     var split = std.mem.split(u8, "/o/k", "/");
+//     while (split.next()) |x| {
+//         try keys.append(x);
+//     }
+//     try t.insert(keys.items, 4269);
+//     var v = t.search(keys.items);
+//     print("\n\n\n{?}\n\n\n", .{v});
+//     print("\n\n\n{?}\n\n\n", .{v});
+
+//     print("\n\n\n{?}\n\n\n", .{v});
+// }
 
 fn eqqq(k1: []const u8, k2: []const u8) bool {
     return std.mem.eql(u8, k1, k2);
