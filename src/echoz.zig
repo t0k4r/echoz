@@ -1,5 +1,5 @@
 const std = @import("std");
-const tr = @import("./Trie.zig");
+const tr = @import("./trie.zig");
 const testing = std.testing;
 const http = std.http;
 const net = std.net;
@@ -10,7 +10,6 @@ const Allocator = std.mem.Allocator;
 test "Router" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
-
     var r = Router().init(alloc);
     try r.add_route("/hello", world);
     // r.GET("/hello", handle);
@@ -23,7 +22,7 @@ test "Router" {
 }
 
 test "Trie" {
-    _ = @import("./Trie.zig");
+    _ = @import("./trie.zig");
 }
 // test "Trie" {
 //     // _ = @import("./Trie.zig");
@@ -53,7 +52,7 @@ fn Router() type {
         const Self = @This();
         routes: std.ArrayList(Route),
         fn init(allocator: Allocator) Self {
-            // const r = Route{ .route = "/hello", .handler = handler };
+            // const r =comptime T: type Route{ .route = "/hello", .handler = handler };
             // _ = r;
             return Self{ .routes = std.ArrayList(Route).init(allocator) };
         }
