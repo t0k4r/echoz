@@ -20,6 +20,15 @@ fn Node(comptime T: type) type {
             }
             self.children.deinit();
         }
+        fn deinitception(self: *Self) void {
+            for (self.children.items) |child| {
+                child.deinit();
+            }
+            self.children.deinit();
+            if (self.value) |*v| {
+                v.deinit();
+            }
+        }
     };
 }
 
@@ -36,6 +45,9 @@ pub fn RadixTree(comptime T: type) type {
         }
         pub fn deinit(self: *Self) void {
             self.root.deinit();
+        }
+        pub fn deinitception(self: *Self) void {
+            self.root.deinitception();
         }
         pub fn insert(self: *Self, keys: []const u8, value: T) !void {
             var keys_iter = std.mem.split(u8, keys, "/");

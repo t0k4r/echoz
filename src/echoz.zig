@@ -21,3 +21,19 @@ fn xd() *const fn () bool {
 fn v() bool {
     return true;
 }
+
+test "clojure" {
+    const c = 3;
+    const func = struct {
+        pub fn call() bool {
+            return c != 2137;
+        }
+    };
+    const z = func.call;
+
+    try testing.expect(z());
+}
+
+test "Router" {
+    _ = @import("./router.zig");
+}
