@@ -34,10 +34,8 @@ pub fn Router(comptime T: type) type {
         }
 
         fn handle(self: *Self, method: http.Method, path: []const u8, handler: HandlerFunc) !void {
-            if (self.tree.search(path)) |*i| {
-                _ = i;
-                // try i.put(method, handler);
-                // try self.tree.insert(path, i);
+            if (self.tree.searchPtr(path)) |i| {
+                try i.put(method, handler);
             } else {
                 var i = std.AutoHashMap(http.Method, HandlerFunc).init(self.allocator);
                 try i.put(method, handler);
@@ -56,7 +54,7 @@ test "Router" {
     _ = alloc;
     const talloc = testing.allocator;
 
-    var r = Router(u8).init(talloc);
+    var r = Router(undefined).init(talloc);
     defer r.deinit();
     try r.GET("/tes", tes);
 }
