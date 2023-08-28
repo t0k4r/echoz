@@ -51,11 +51,12 @@ pub fn Router(comptime T: type) type {
 }
 
 test "Router" {
-    const testi = std.testing;
-    _ = testi;
-    const allocator = std.heap.page_allocator;
+    const testing = std.testing;
+    const alloc = std.heap.page_allocator;
+    _ = alloc;
+    const talloc = testing.allocator;
 
-    var r = Router(u8).init(allocator);
+    var r = Router(u8).init(talloc);
     defer r.deinit();
     try r.GET("/tes", tes);
 }

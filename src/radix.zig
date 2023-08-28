@@ -21,8 +21,8 @@ fn Node(comptime T: type) type {
             self.children.deinit();
         }
         fn deinitception(self: *Self) void {
-            for (self.children.items) |child| {
-                child.deinit();
+            for (self.children.items) |*child| {
+                child.deinitception();
             }
             self.children.deinit();
             if (self.value) |*v| {
