@@ -3,50 +3,52 @@ const RadixTree = @import("./radix.zig").RadixTree;
 const http = std.http;
 const Allocator = std.mem.Allocator;
 
-fn Context(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        shared: T,
-        request: http.Server.Request,
-        response: http.Server.Response,
-        pub fn text() !void {}
-        pub fn json() !void {}
-    };
-}
+pub const Context = struct {
+    const Self = @This();
+    response: *http.Server.Response,
+    pub fn text() !void {}
+    pub fn json() !void {}
+};
 
-pub fn Router(comptime T: type) type {
-    const HandlerFunc = *const fn (Context(T)) anyerror!void;
-    const MiddlewareFunc = *const fn (HandlerFunc) HandlerFunc;
-    _ = MiddlewareFunc;
+pub const HandlerFunc = *const fn (Context) anyerror!void;
+pub const MiddlewareFunc = *const fn (HandlerFunc) HandlerFunc;
 
-    return struct {
-        const Self = @This();
-        tree: RadixTree(std.AutoHashMap(http.Method, HandlerFunc)),
-        allocator: Allocator,
-        pub fn init(allocator: Allocator) Self {
-            return Self{
-                .tree = RadixTree(std.AutoHashMap(http.Method, HandlerFunc)).init(allocator),
-                .allocator = allocator,
-            };
+pub const Router = struct {
+    const Self = @This();
+    tree: RadixTree(std.AutoHashMap(http.Method, HandlerFunc)),
+    allocator: Allocator,
+    pub fn init(allocator: Allocator) Self {
+        return Self{
+            .tree = RadixTree(std.AutoHashMap(http.Method, HandlerFunc)).init(allocator),
+            .allocator = allocator,
+        };
+    }
+    pub fn deinit(self: *Self) void {
+        self.tree.deinitception();
+    }
+
+    fn add_handler(self: *Self, method: http.Method, path: []const u8, handler: HandlerFunc) !void {
+        if (self.tree.searchPtr(path)) |i| {
+            try i.put(method, handler);
+        } else {
+            var i = std.AutoHashMap(http.Method, HandlerFunc).init(self.allocator);
+            // i.ge
+            try i.put(method, handler);
+            try self.tree.insert(path, i);
         }
-        pub fn deinit(self: *Self) void {
-            self.tree.deinitception();
-        }
-
-        fn handle(self: *Self, method: http.Method, path: []const u8, handler: HandlerFunc) !void {
-            if (self.tree.searchPtr(path)) |i| {
-                try i.put(method, handler);
-            } else {
-                var i = std.AutoHashMap(http.Method, HandlerFunc).init(self.allocator);
-                try i.put(method, handler);
-                try self.tree.insert(path, i);
+    }
+    pub fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+        try self.add_handler(http.Method.GET, path, handler);
+    }
+    pub fn handle(self: *Self, resp: *http.Server.Response) !void {
+        if (self.tree.search(resp.request.target)) |h| {
+            if (h.get(resp.request.method)) |handler| {
+                var ctx = Context{ .response = resp };
+                try handler(ctx);
             }
         }
-        pub fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.handle(http.Method.GET, path, handler);
-        }
-    };
-}
+    }
+};
 
 test "Router" {
     const testing = std.testing;
@@ -54,12 +56,21 @@ test "Router" {
     _ = alloc;
     const talloc = testing.allocator;
 
-    var r = Router(undefined).init(talloc);
+    var s = http.Server.init(talloc, .{});
+    defer s.deinit();
+
+    var r = Router.init(talloc);
     defer r.deinit();
     try r.GET("/tes", tes);
+
+    try s.listen(try std.net.Address.parseIp("127.0.0.1", 2137));
+    var re = try s.accept(.{ .allocator = talloc });
+    defer re.deinit();
+    try re.wait();
+    try r.handle(&re);
 }
 
-fn tes(c: Context(u8)) !void {
+fn tes(c: Context) !void {
     _ = c;
     std.debug.print("tes", .{});
 }
