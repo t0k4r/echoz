@@ -86,7 +86,7 @@ pub fn RadixTree(comptime T: type) type {
                 }
             }
         }
-        pub fn search(self: *Self, keys: []const u8) ?T {
+        fn search_index(self: *Self, keys: []const u8) ?usize {
             var keys_clean = std.mem.split(u8, keys, "?");
             var keys_iter = std.mem.split(u8, keys_clean.first(), "/");
             var now = &self.root;
@@ -98,7 +98,7 @@ pub fn RadixTree(comptime T: type) type {
                         (if (item.key.len != 0) item.key[0] == ':' else false))
                     {
                         if (last) {
-                            return if (item.index) |i| self.values.items[i] else null;
+                            return if (item.index) |i| i else null;
                         } else {
                             now = item;
                         }
@@ -110,29 +110,11 @@ pub fn RadixTree(comptime T: type) type {
             }
             return null;
         }
+        pub fn search(self: *Self, keys: []const u8) ?T {
+            return if (self.search_index(keys)) |i| self.values.items[i] else null;
+        }
         pub fn searchPtr(self: *Self, keys: []const u8) ?*T {
-            var keys_clean = std.mem.split(u8, keys, "?");
-            var keys_iter = std.mem.split(u8, keys_clean.first(), "/");
-            var now = &self.root;
-            while (keys_iter.next()) |key| {
-                var last = keys_iter.peek() == null;
-                for (now.children.items) |*item| {
-                    if (std.mem.eql(u8, item.key, key) or
-                        std.mem.eql(u8, item.key, "*") or
-                        (if (item.key.len != 0) item.key[0] == ':' else false))
-                    {
-                        if (last) {
-                            return if (item.index) |i| &self.values.items[i] else null;
-                        } else {
-                            now = item;
-                        }
-                        break;
-                    }
-                } else {
-                    return null;
-                }
-            }
-            return null;
+            return if (self.search_index(keys)) |i| &self.values.items[i] else null;
         }
     };
 }

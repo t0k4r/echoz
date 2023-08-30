@@ -32,13 +32,12 @@ pub const Router = struct {
             try i.put(method, handler);
         } else {
             var i = std.AutoHashMap(http.Method, HandlerFunc).init(self.allocator);
-            // i.ge
             try i.put(method, handler);
             try self.tree.insert(path, i);
         }
     }
-    pub fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-        try self.add_handler(http.Method.GET, path, handler);
+    pub fn GET(self: *Self, path: []const u8, handler: HandlerFunc, middleware: ?MiddlewareFunc) !void {
+        try self.add_handler(http.Method.GET, path, if (middleware) |m| m(handler) else handler);
     }
     pub fn handle(self: *Self, resp: *http.Server.Response) !void {
         if (self.tree.search(resp.request.target)) |h| {
@@ -61,7 +60,7 @@ test "Router" {
 
     var r = Router.init(talloc);
     defer r.deinit();
-    try r.GET("/tes", tes);
+    try r.GET("/tes", tes, tes2);
 
     try s.listen(try std.net.Address.parseIp("127.0.0.1", 2137));
     var re = try s.accept(.{ .allocator = talloc });
@@ -73,4 +72,20 @@ test "Router" {
 fn tes(c: Context) !void {
     _ = c;
     std.debug.print("tes", .{});
+}
+
+fn tes2(h: HandlerFunc) HandlerFunc {
+    const func = struct {
+        fn call(c: Context) HandlerFunc {
+            _ = c;
+            std.debug.print("tes2", .{});
+            // h(c);
+        }
+    };
+    _ = func;
+    return h;
+}
+
+fn tes3(h: HandlerFunc) !void {
+    _ = h;
 }
