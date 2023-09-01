@@ -10,53 +10,20 @@ pub const Context = struct {
     pub fn json() !void {}
 };
 
-pub const HandlerFunc = *const fn (Context) anyerror!void;
-pub const MiddlewareFunc = *const fn (Context, ?HandlerFunc) anyerror!void;
+pub const HandlerFunc = *const fn (ctx: Context) anyerror!void;
+pub const MiddlewareFunc = *const fn (next: ?*Middleware, ctx: Context, h: HandlerFunc) anyerror!void;
 
-// const Handler = struct {
-//     middleware: ?*Middleware = null,
-//     handler: HandlerFunc,
-//     const Self = @This();
-//     fn init(handler: HandlerFunc) Self {
-//         return Self{
-//             .handler = handler,
-//         };
-//     }
-//     fn exec(self: *Self, ctx: *Context) !void {
-//         std.debug.print("exe\n", .{});
-//         if (self.middleware) |m| {
-//             std.debug.print("mid\n", .{});
-//             try m.on_request(ctx, self.handler);
-//         } else {
-//             std.debug.print("han\n", .{});
-//             try self.handler(ctx);
-//         }
-//     }
-//     fn use(self: *Self, middleware: Middleware) void {
-//         if (self.middleware) |m| {
-//             var now = m;
-//             var i: i32 = 0;
-//             while (now.next) |o| {
-//                 now = o;
-//                 i += 1;
-//             }
-//             std.debug.print("{}", .{i});
-//             now.next = @constCast(&middleware);
-//         } else {
-//             self.middleware = @constCast(&middleware);
-//         }
-//     }
-// };
 const Middleware = struct {
     const Self = @This();
     func: MiddlewareFunc,
+    next: ?*Middleware = null,
     fn init(func: MiddlewareFunc) Self {
         return Self{
             .func = func,
         };
     }
     fn exec(self: *Self, ctx: Context, handler: HandlerFunc) !void {
-        return self.func(ctx, handler);
+        try self.func(self.next, ctx, handler);
     }
 };
 
@@ -69,8 +36,20 @@ const Handler = struct {
             .func = func,
         };
     }
-    fn use(self: *Self, middleware: Middleware) void {
-        self.middleware = middleware;
+    fn use(self: *Self, middleware: *Middleware) void {
+        var i: u32 = 0;
+        if (self.middleware) |*m| {
+            std.debug.print("self middlerware\n", .{});
+            var now: *Middleware = m;
+            while (now.next) |n| {
+                now = n;
+                i += 1;
+            }
+            now.next = middleware;
+        } else {
+            self.middleware = middleware.*;
+        }
+        std.debug.print("{}\n", .{i});
     }
     fn exec(self: *Self, ctx: Context) !void {
         return if (self.middleware) |*m| m.exec(ctx, self.func) else self.func(ctx);
@@ -97,9 +76,15 @@ pub const Router = struct {
         } else {
             var i = std.AutoHashMap(http.Method, Handler).init(self.allocator);
             var h = Handler.init(handler);
-            h.use(Middleware.init(tes2));
-            // h.use(Middleware.init(tes2, 0));
-            // h.use(Middleware.init(tes2, 1));
+            var m1: *Middleware = try self.allocator.create(Middleware);
+            m1.* = Middleware.init(tes2);
+            h.use(m1);
+            var m2: *Middleware = try self.allocator.create(Middleware);
+            m2.* = Middleware.init(tes2);
+            h.use(m2);
+            var m3: *Middleware = try self.allocator.create(Middleware);
+            m3.* = Middleware.init(tes2);
+            h.use(m3);
             try i.put(method, h);
             try self.tree.insert(path, i);
         }
@@ -120,73 +105,31 @@ pub const Router = struct {
 test "Router" {
     const testing = std.testing;
     const alloc = std.heap.page_allocator;
-    _ = alloc;
     const talloc = testing.allocator;
+    _ = talloc;
 
-    var s = http.Server.init(talloc, .{});
+    var s = http.Server.init(alloc, .{});
     defer s.deinit();
 
-    var r = Router.init(talloc);
+    var r = Router.init(alloc);
     defer r.deinit();
     try r.GET("/tes", tes);
 
     try s.listen(try std.net.Address.parseIp("127.0.0.1", 2137));
-    var re = try s.accept(.{ .allocator = talloc });
+    var re = try s.accept(.{ .allocator = alloc });
     defer re.deinit();
     try re.wait();
     try re.do();
     try r.handle(&re);
 }
 
-fn tes(c: Context) !void {
-    _ = c;
+fn tes(ctx: Context) !void {
+    _ = ctx;
     std.debug.print("tes2\n", .{});
 }
 
-fn tes2(ctx: Context, next: ?HandlerFunc) !void {
+fn tes2(next: ?*Middleware, ctx: Context, h: HandlerFunc) !void {
     std.debug.print("tes1\n", .{});
-    if (next) |n| try n(ctx);
+    if (next) |n| try n.exec(ctx, h) else try h(ctx);
     std.debug.print("tes3\n", .{});
 }
-
-// const Middleware = struct {
-//     const Self = @This();
-//     next: ?*Middleware = null,
-//     middleware: MiddlewareFunc,
-//     id: u32 = 0,
-//     fn init(middleware: MiddlewareFunc, id: u32) Self {
-//         _ = id;
-//         // if (id != 0 or id != 1) {
-//         //     @compileError("WTFFFF");
-//         // }
-//         return Self{
-//             .middleware = middleware,
-//             .id = 1,
-//         };
-//     }
-//     // fn add_other(self: *Self, other: *const Self) void {
-//     //     var now = self;
-//     //     while (now.other) |o| {
-//     //         now = o;
-//     //     }
-//     //     now.other = @constCast(other);
-//     // }
-//     fn on_request(self: *Self, ctx: *Context, handler: HandlerFunc) !void {
-//         std.debug.print("ID: {d}\n", .{self.id});
-//         std.debug.print("nextnull: {}\n", .{self.next == null});
-
-//         if (self.next) |next| {
-//             _ = next;
-//             std.debug.print("next\n", .{});
-//             // var b = next.next;
-//             // _ = b;
-//             if (self.next == null) std.debug.print("nextnull\n", .{});
-//             // const c = @constCast(&Context{});
-//             // try next.on_request(c, handler);
-//             // try next.middleware(c, null);
-//         } else {
-//             std.debug.print("last\n", .{});
-//             try self.middleware(ctx, handler);
-//         }
-//     }
-// };
