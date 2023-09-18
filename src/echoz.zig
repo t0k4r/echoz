@@ -1,144 +1,151 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const http = std.http;
 
-const Node = struct {
-    const Self = @This();
-    key: []const u8,
-    value: ?usize,
-    children: std.ArrayList(Node),
-    fn init(allocator: Allocator, key: []const u8, value: ?usize) Self {
-        return Self{
-            .key = key,
-            .value = value,
-            .children = std.ArrayList(Node).init(allocator),
-        };
-    }
+const Tree = @import("./tree.zig").Tree;
+test "Tree" {
+    _ = @import("./tree.zig");
+}
 
-    fn deinit(self: Self) void {
-        for (self.children.items) |child| {
-            child.deinit();
-        }
-        self.children.deinit();
-    }
-};
-
-fn Tree(comptime T: type) type {
+fn Middleware(comptime T: type) type {
     return struct {
         const Self = @This();
         allocator: Allocator,
-        root: Node,
-        values: std.ArrayList(T),
-        fn init(allocator: Allocator) Self {
+        func: Router(T).MiddlewareFunc,
+        next: ?*Middleware(T) = null,
+        fn init(allocator: Allocator, func: Router(T).MiddlewareFunc) Self {
             return Self{
                 .allocator = allocator,
-                .root = Node.init(allocator, "", null),
-                .values = std.ArrayList(T).init(allocator),
+                .func = func,
             };
         }
-        fn deinit(self: Self) void {
-            self.root.deinit();
-            self.values.deinit();
-        }
-        fn insert(self: *Self, keys: []const u8, value: T) !void {
-            var key_iter = std.mem.split(u8, keys, "/");
-            var now = &self.root;
-            while (key_iter.next()) |key| {
-                var last = key_iter.peek() == null;
-                for (now.children.items) |*item| {
-                    if (std.mem.eql(u8, item.key, key)) {
-                        if (last) {
-                            if (item.value) |i| {
-                                self.values.items[i] = value;
-                            } else {
-                                item.value = self.values.items.len;
-                                if (key[0] == ':') try self.values.append(value) else try self.values.insert(0, value);
-                            }
-                        } else now = item;
-                        break;
-                    }
-                } else {
-                    if (last) {
-                        try now.children.append(Node.init(self.allocator, key, self.values.items.len));
-                        try self.values.append(value);
-                    } else {
-                        var i = now.children.items.len;
-                        try now.children.append(Node.init(self.allocator, key, null));
-                        now = &now.children.items[i];
-                    }
-                }
+        fn deinit(self: *Self) void {
+            if (self.next) |n| {
+                n.deinit();
+                self.allocator.destroy(n);
             }
         }
-        fn search_index(self: *Self, keys: []const u8) ?usize {
-            var key_iter = std.mem.split(u8, keys, "/");
-            var now = &self.root;
-            while (key_iter.next()) |key| {
-                var last = key_iter.peek() == null;
-                for (now.children.items) |*item| {
-                    if (std.mem.eql(u8, item.key, key) or (if (item.key.len != 0) item.key[0] == ':' else false)) {
-                        if (last) {
-                            return item.value;
-                        } else now = item;
-                        break;
-                    }
-                } else {
-                    return null;
+        fn add(self: *Self, middleware: Router(T).MiddlewareFunc) !void {
+            var now = self;
+            while (now.next) |n| {
+                now = n;
+            }
+            var m = try self.allocator.create(Middleware(T));
+            m.* = Middleware(T).init(self.allocator, middleware);
+            now.next = m;
+        }
+        fn exec(self: *Self, ctx: Router(T).Context, handler: Router(T).HandlerFunc) !void {
+            try self.func(self.next, ctx, handler);
+        }
+    };
+}
+
+fn Handler(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        func: Router(T).HandlerFunc,
+        middleware: ?Middleware(T) = null,
+        fn init(func: Router(T).HandlerFunc) Self {
+            return Self{
+                .func = func,
+            };
+        }
+        fn exec(self: *Self, ctx: Router(T).Context) !void {
+            if (self.middleware) |*m| try m.exec(ctx, self.func) else try self.func(ctx);
+        }
+    };
+}
+
+fn Router(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        const Context = struct {
+            const Ctx = @This();
+            shared: *T,
+            res: *http.Server.Response,
+            fn init(res: *http.Server.Response, shared: *T) Ctx {
+                return Ctx{
+                    .res = res,
+                    .shared = shared,
+                };
+            }
+            fn text(self: *Ctx) !void {
+                _ = self;
+            }
+            fn json(self: *Ctx) !void {
+                _ = self;
+            }
+        };
+        const HandlerFunc = *const fn (ctx: Context) anyerror!void;
+        const MiddlewareFunc = *const fn (next: ?*Middleware(T), ctx: Context, handler: HandlerFunc) anyerror!void;
+
+        allocator: Allocator,
+        shared: T,
+        tree: Tree(std.AutoHashMap(http.Method, Handler(T))),
+        middleware: ?Middleware(T) = null,
+        fn init(allocator: Allocator, shared: T) Self {
+            return Self{
+                .allocator = allocator,
+                .shared = shared,
+                .tree = Tree(std.AutoHashMap(http.Method, Handler(T))).init(allocator),
+            };
+        }
+        fn deinit(self: *Self) void {
+            self.tree.deinit_all();
+            if (self.middleware) |*m| m.deinit();
+        }
+        fn use(self: *Self, middleware: MiddlewareFunc) !void {
+            if (self.middleware) |*m| {
+                try m.add(middleware);
+            } else {
+                self.middleware = Middleware(T).init(self.allocator, middleware);
+            }
+        }
+
+        fn add_handler(self: *Self, method: http.Method, path: []const u8, handler: HandlerFunc) !void {
+            if (self.tree.searchPtr(path)) |m| {
+                var h = Handler(T).init(handler);
+                h.middleware = self.middleware;
+                try m.put(method, h);
+            } else {
+                var m = std.AutoHashMap(http.Method, Handler(T)).init(self.allocator);
+                var h = Handler(T).init(handler);
+                h.middleware = self.middleware;
+                try m.put(method, h);
+                try self.tree.insert(path, m);
+            }
+        }
+
+        fn handle(self: *Self, path: []const u8) !void {
+            if (self.tree.search(path)) |h| {
+                if (h.getPtr(http.Method.GET)) |func| {
+                    try func.exec(Context.init(self.shared));
                 }
             }
-            return null;
-        }
-        fn search(self: *Self, keys: []const u8) ?T {
-            return if (self.search_index(keys)) |i| self.values.items[i] else null;
-        }
-        fn searchPtr(self: *Self, keys: []const u8) ?*T {
-            return if (self.search_index(keys)) |i| &self.values.items[i] else null;
-        }
-        fn search_route(self: *Self, keys: []const u8) !?std.ArrayList([]const u8) {
-            var route = std.ArrayList([]const u8).init(self.allocator);
-            errdefer route.deinit();
-            var key_iter = std.mem.split(u8, keys, "/");
-            var now = &self.root;
-            while (key_iter.next()) |key| {
-                var last = key_iter.peek() == null;
-                for (now.children.items) |*item| {
-                    if (std.mem.eql(u8, item.key, key) or (if (item.key.len != 0) item.key[0] == ':' else false)) {
-                        if (item.key.len != 0) try route.append(item.key);
-                        if (last) {
-                            return route;
-                        } else now = item;
-                        break;
-                    }
-                } else {
-                    route.deinit();
-                    return null;
-                }
-            }
-            route.deinit();
-            return null;
         }
     };
 }
 
 const testing = std.testing;
-test "TreeTest" {
-    const allocator = std.testing.allocator;
-    var t = Tree(u32).init(allocator);
-    defer t.deinit();
-    try t.insert("/ok/ok", 21);
-    try t.insert("/ok/:xd", 37);
-    try testing.expect(21 == t.search("/ok/ok"));
-    try testing.expect(37 == t.searchPtr("/ok/abc").?.*);
-    try testing.expect(null == t.search("/oko/oko"));
-    var ro = try t.search_route("/ok/xyz");
-    if (ro) |r| {
-        defer r.deinit();
-        for (r.items, 0..) |value, i| {
-            switch (i) {
-                0 => try testing.expect(std.mem.eql(u8, "ok", value)),
-                1 => try testing.expect(std.mem.eql(u8, ":xd", value)),
-                else => unreachable,
-            }
-        }
-    } else {
-        unreachable;
-    }
+test "Router" {
+    const allocator = testing.allocator;
+
+    var r = Router(u32).init(allocator, 32);
+    defer r.deinit();
+    try r.use(mid);
+
+    try r.add_handler(http.Method.GET, "/xd/ok", xd);
+    try r.handle("/xd/ok");
+}
+
+fn xd(ctx: Router(u32).Context) !void {
+    _ = ctx;
+    std.debug.print("{}\n", .{2137});
+}
+
+fn mid(next: ?*Middleware(u32), ctx: Router(u32).Context, handler: Router(u32).HandlerFunc) !void {
+    std.debug.print("mid1\n", .{});
+    if (next) |n| try n.exec(ctx, handler) else try handler(ctx);
+    std.debug.print("mid2\n", .{});
 }
