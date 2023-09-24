@@ -117,10 +117,10 @@ fn Router(comptime T: type) type {
             }
         }
 
-        fn handle(self: *Self, path: []const u8) !void {
-            if (self.tree.search(path)) |h| {
+        fn handle(self: *Self, res: *http.Server.Response) !void {
+            if (self.tree.search(res.request.target)) |h| {
                 if (h.getPtr(http.Method.GET)) |func| {
-                    try func.exec(Context.init(self.shared));
+                    try func.exec(Context.init(res, &self.shared));
                 }
             }
         }
@@ -136,7 +136,16 @@ test "Router" {
     try r.use(mid);
 
     try r.add_handler(http.Method.GET, "/xd/ok", xd);
-    try r.handle("/xd/ok");
+
+    var ser = http.Server.init(allocator, .{});
+    defer ser.deinit();
+
+    try ser.listen(try std.net.Address.parseIp("127.0.0.1", 2137));
+
+    var res = try ser.accept(.{ .allocator = allocator });
+    try res.wait();
+    try r.handle(&res);
+    res.deinit();
 }
 
 fn xd(ctx: Router(u32).Context) !void {
