@@ -62,19 +62,37 @@ pub fn Router(comptime T: type) type {
 
         pub const Context = struct {
             const Ctx = @This();
+            allocator: Allocator,
             shared: *T,
             res: *http.Server.Response,
-            fn init(res: *http.Server.Response, shared: *T) Ctx {
+            fn init(allocator: Allocator, res: *http.Server.Response, shared: *T) Ctx {
                 return Ctx{
+                    .allocator = allocator,
                     .res = res,
                     .shared = shared,
                 };
             }
-            fn text(self: *Ctx) !void {
-                _ = self;
+            pub fn no_content(self: Ctx, status: http.Status) !void {
+                self.res.status = status;
+                try self.res.do();
             }
-            fn json(self: *Ctx) !void {
-                _ = self;
+
+            pub fn plain(self: Ctx, status: http.Status, text: []const u8) !void {
+                try self.res.headers.append("Content-Type", "text/plain");
+                self.res.status = status;
+                self.res.transfer_encoding = .{ .content_length = text.len };
+                try self.res.do();
+                _ = try self.res.write(text);
+            }
+            pub fn json(self: Ctx, status: http.Status, data: anytype) !void {
+                var string = std.ArrayList(u8).init(self.allocator);
+                defer string.deinit();
+                try std.json.stringify(data, .{}, string.writer());
+                try self.res.headers.append("Content-Type", "application/json");
+                self.res.status = status;
+                self.res.transfer_encoding = .{ .content_length = string.items.len };
+                try self.res.do();
+                _ = try self.res.write(string.items);
             }
         };
         pub const HandlerFunc = *const fn (ctx: Context) anyerror!void;
@@ -119,8 +137,12 @@ pub fn Router(comptime T: type) type {
 
         pub fn handle(self: *Self, res: *http.Server.Response) !void {
             if (self.tree.search(res.request.target)) |h| {
-                if (h.getPtr(http.Method.GET)) |func| {
-                    try func.exec(Context.init(res, &self.shared));
+                if (h.getPtr(res.request.method)) |func| {
+                    // var ctx = try self.allocator.create(Context);
+                    // defer self.allocator.destroy(ctx);
+                    // ctx.* = Context.init(res, &self.shared);
+                    var ctx = Context.init(self.allocator, res, &self.shared);
+                    try func.exec(ctx);
                 }
             }
         }
@@ -148,12 +170,12 @@ test "Router" {
     // res.deinit();
 }
 
-fn xd(ctx: Router(u32).Context) !void {
+fn xd(ctx: *Router(u32).Context) !void {
     _ = ctx;
     std.debug.print("{}\n", .{2137});
 }
 
-fn mid(next: ?*Middleware(u32), ctx: Router(u32).Context, handler: Router(u32).HandlerFunc) !void {
+fn mid(next: ?*Middleware(u32), ctx: *Router(u32).Context, handler: Router(u32).HandlerFunc) !void {
     std.debug.print("mid1\n", .{});
     if (next) |n| try n.exec(ctx, handler) else try handler(ctx);
     std.debug.print("mid2\n", .{});

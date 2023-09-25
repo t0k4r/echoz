@@ -19,7 +19,10 @@ pub fn Echo(comptime T: type) type {
             return Self{
                 .allocator = allocator,
                 .router = Router(T).init(allocator, shared),
-                .server = http.Server.init(allocator, .{}),
+                .server = http.Server.init(allocator, .{
+                    .reuse_address = true,
+                    .reuse_port = true,
+                }),
             };
         }
         fn deinit(self: *Self) void {
@@ -27,22 +30,44 @@ pub fn Echo(comptime T: type) type {
             self.server.deinit();
         }
 
+        fn use(self: *Self, middleware: MiddlewareFunc) !void {
+            try self.router.use(middleware);
+        }
+
         fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
             try self.router.add_handler(http.Method.GET, path, handler);
         }
+        fn HEAD(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.HEAD, path, handler);
+        }
         fn POST(self: *Self, path: []const u8, handler: HandlerFunc) !void {
             try self.router.add_handler(http.Method.POST, path, handler);
+        }
+        fn PUT(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.PUT, path, handler);
+        }
+        fn DELETE(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.DELETE, path, handler);
+        }
+        fn CONNECT(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.CONNECT, path, handler);
+        }
+        fn OPTIONS(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.OPTIONS, path, handler);
+        }
+        fn TRACE(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.TRACE, path, handler);
+        }
+        fn PATCH(self: *Self, path: []const u8, handler: HandlerFunc) !void {
+            try self.router.add_handler(http.Method.PATCH, path, handler);
         }
         fn listen_and_server(self: *Self, address: net.Address) !void {
             try self.server.listen(address);
             while (true) {
                 var res = try self.server.accept(.{ .allocator = self.allocator });
+                defer res.deinit();
                 try res.wait();
                 try self.router.handle(&res);
-                try res.finish();
-                _ = res.reset();
-                res.deinit();
-                break;
             }
         }
     };
@@ -53,14 +78,19 @@ test "Echoz" {
     const allocator = testing.allocator;
     var e = Echo(u32).init(allocator, 2137);
     defer e.deinit();
-    try e.GET("/ok", ok);
+    try e.GET("/plain", hplain);
+    try e.GET("/json", hjson);
+    try e.GET("/no", hno_content);
     try e.listen_and_server(try net.Address.parseIp("127.0.0.1", 2137));
 }
 
-fn ok(ctx: Echo(u32).Context) !void {
-    try ctx.res.do();
-    try ctx.res.headers.append("Content-Type", "text/plain");
-    ctx.res.transfer_encoding = .{ .content_length = "ok".len };
-    _ = try ctx.res.write("ok");
-    // std.debug.print("{}\n", .{ctx.shared.*});
+fn hplain(ctx: Echo(u32).Context) !void {
+    return ctx.plain(.ok, "Hello, World\n");
+}
+
+fn hjson(ctx: Echo(u32).Context) !void {
+    return ctx.json(.ok, .{ .hello = "world" });
+}
+fn hno_content(ctx: Echo(u32).Context) !void {
+    return ctx.no_content(.ok);
 }
