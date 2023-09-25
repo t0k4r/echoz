@@ -168,6 +168,7 @@ pub fn Router(comptime T: type) type {
                     // defer self.allocator.destroy(ctx);
                     // ctx.* = Context.init(res, &self.shared);
                     var ctx = try Context.init(self.allocator, res, &self.shared, &self.tree);
+                    defer ctx.deinit();
                     try func.exec(ctx);
                 }
             }

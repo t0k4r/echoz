@@ -63,11 +63,16 @@ pub fn Echo(comptime T: type) type {
         }
         fn listen_and_server(self: *Self, address: net.Address) !void {
             try self.server.listen(address);
+            var i: usize = 0;
             while (true) {
                 var res = try self.server.accept(.{ .allocator = self.allocator });
                 defer res.deinit();
                 try res.wait();
                 try self.router.handle(&res);
+                i += 1;
+                if (i == 3) {
+                    break;
+                }
             }
         }
     };
@@ -81,7 +86,7 @@ test "Echoz" {
     try e.GET("/plain", hplain);
     try e.GET("/json", hjson);
     try e.GET("/no", hno_content);
-    try e.GET("/param/:ok/xd", hparam);
+    try e.GET("/param/:ok", hparam);
     try e.listen_and_server(try net.Address.parseIp("127.0.0.1", 2137));
 }
 
