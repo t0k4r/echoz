@@ -35,31 +35,31 @@ pub fn Echo(comptime T: type) type {
         }
 
         fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.GET, path, handler);
+            try self.router.add_handler(.GET, path, handler);
         }
         fn HEAD(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.HEAD, path, handler);
+            try self.router.add_handler(.HEAD, path, handler);
         }
         fn POST(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.POST, path, handler);
+            try self.router.add_handler(.POST, path, handler);
         }
         fn PUT(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.PUT, path, handler);
+            try self.router.add_handler(.PUT, path, handler);
         }
         fn DELETE(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.DELETE, path, handler);
+            try self.router.add_handler(.DELETE, path, handler);
         }
         fn CONNECT(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.CONNECT, path, handler);
+            try self.router.add_handler(.CONNECT, path, handler);
         }
         fn OPTIONS(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.OPTIONS, path, handler);
+            try self.router.add_handler(.OPTIONS, path, handler);
         }
         fn TRACE(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.TRACE, path, handler);
+            try self.router.add_handler(.TRACE, path, handler);
         }
         fn PATCH(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-            try self.router.add_handler(http.Method.PATCH, path, handler);
+            try self.router.add_handler(.PATCH, path, handler);
         }
         fn listen_and_server(self: *Self, address: net.Address) !void {
             try self.server.listen(address);
@@ -103,5 +103,5 @@ fn hno_content(ctx: *Echo(u32).Context) !void {
 
 fn hparam(ctx: *Echo(u32).Context) !void {
     var param = try ctx.param(":ok");
-    return if (param) |p| ctx.plain(.ok, p) else std.mem.Allocator.Error.OutOfMemory;
+    return if (param) |p| ctx.plain(.ok, p) else ctx.no_content(.ok);
 }

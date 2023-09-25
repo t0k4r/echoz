@@ -164,9 +164,6 @@ pub fn Router(comptime T: type) type {
         pub fn handle(self: *Self, res: *http.Server.Response) !void {
             if (self.tree.search(res.request.target)) |h| {
                 if (h.getPtr(res.request.method)) |func| {
-                    // var ctx = try self.allocator.create(Context);
-                    // defer self.allocator.destroy(ctx);
-                    // ctx.* = Context.init(res, &self.shared);
                     var ctx = try Context.init(self.allocator, res, &self.shared, &self.tree);
                     defer ctx.deinit();
                     try func.exec(ctx);
@@ -174,32 +171,6 @@ pub fn Router(comptime T: type) type {
             }
         }
     };
-}
-
-const testing = std.testing;
-test "Router" {
-    // const allocator = testing.allocator;
-
-    // var r = Router(u32).init(allocator, 32);
-    // defer r.deinit();
-    // try r.use(mid);
-
-    // try r.add_handler(http.Method.GET, "/xd/ok", xd);
-
-    // var ser = http.Server.init(allocator, .{});
-    // defer ser.deinit();
-
-    // try ser.listen(try std.net.Address.parseIp("127.0.0.1", 2137));
-
-    // var res = try ser.accept(.{ .allocator = allocator });
-    // try res.wait();
-    // try r.handle(&res);
-    // res.deinit();
-}
-
-fn xd(ctx: *Router(u32).Context) !void {
-    _ = ctx;
-    std.debug.print("{}\n", .{2137});
 }
 
 fn mid(next: ?*Middleware(u32), ctx: *Router(u32).Context, handler: Router(u32).HandlerFunc) !void {
