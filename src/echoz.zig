@@ -81,16 +81,22 @@ test "Echoz" {
     try e.GET("/plain", hplain);
     try e.GET("/json", hjson);
     try e.GET("/no", hno_content);
+    try e.GET("/param/:ok/xd", hparam);
     try e.listen_and_server(try net.Address.parseIp("127.0.0.1", 2137));
 }
 
-fn hplain(ctx: Echo(u32).Context) !void {
+fn hplain(ctx: *Echo(u32).Context) !void {
     return ctx.plain(.ok, "Hello, World\n");
 }
 
-fn hjson(ctx: Echo(u32).Context) !void {
+fn hjson(ctx: *Echo(u32).Context) !void {
     return ctx.json(.ok, .{ .hello = "world" });
 }
-fn hno_content(ctx: Echo(u32).Context) !void {
+fn hno_content(ctx: *Echo(u32).Context) !void {
     return ctx.no_content(.ok);
+}
+
+fn hparam(ctx: *Echo(u32).Context) !void {
+    var param = try ctx.param(":ok");
+    return if (param) |p| ctx.plain(.ok, p) else std.mem.Allocator.Error.OutOfMemory;
 }
