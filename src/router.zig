@@ -1,135 +1,180 @@
 const std = @import("std");
-const RadixTree = @import("./radix.zig").RadixTree;
-const http = std.http;
 const Allocator = std.mem.Allocator;
+const http = std.http;
 
-pub const Context = struct {
-    const Self = @This();
-    response: ?*http.Server.Response = null,
-    pub fn text() !void {}
-    pub fn json() !void {}
-};
+const Tree = @import("./tree.zig").Tree;
+test "Tree" {
+    _ = @import("./tree.zig");
+}
 
-pub const HandlerFunc = *const fn (ctx: Context) anyerror!void;
-pub const MiddlewareFunc = *const fn (next: ?*Middleware, ctx: Context, h: HandlerFunc) anyerror!void;
-
-const Middleware = struct {
-    const Self = @This();
-    func: MiddlewareFunc,
-    next: ?*Middleware = null,
-    fn init(func: MiddlewareFunc) Self {
-        return Self{
-            .func = func,
-        };
-    }
-    fn exec(self: *Self, ctx: Context, handler: HandlerFunc) !void {
-        try self.func(self.next, ctx, handler);
-    }
-};
-
-const Handler = struct {
-    const Self = @This();
-    func: HandlerFunc,
-    middleware: ?Middleware = null,
-    fn init(func: HandlerFunc) Self {
-        return Self{
-            .func = func,
-        };
-    }
-    fn use(self: *Self, middleware: *Middleware) void {
-        var i: u32 = 0;
-        if (self.middleware) |*m| {
-            std.debug.print("self middlerware\n", .{});
-            var now: *Middleware = m;
+fn Middleware(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        allocator: Allocator,
+        func: Router(T).MiddlewareFunc,
+        next: ?*Middleware(T) = null,
+        fn init(allocator: Allocator, func: Router(T).MiddlewareFunc) Self {
+            return Self{
+                .allocator = allocator,
+                .func = func,
+            };
+        }
+        fn deinit(self: *Self) void {
+            if (self.next) |n| {
+                n.deinit();
+                self.allocator.destroy(n);
+            }
+        }
+        fn add(self: *Self, middleware: Router(T).MiddlewareFunc) !void {
+            var now = self;
             while (now.next) |n| {
                 now = n;
-                i += 1;
             }
-            now.next = middleware;
-        } else {
-            self.middleware = middleware.*;
+            var m = try self.allocator.create(Middleware(T));
+            m.* = Middleware(T).init(self.allocator, middleware);
+            now.next = m;
         }
-        std.debug.print("{}\n", .{i});
-    }
-    fn exec(self: *Self, ctx: Context) !void {
-        return if (self.middleware) |*m| m.exec(ctx, self.func) else self.func(ctx);
-    }
-};
+        fn exec(self: *Self, ctx: *Router(T).Context, handler: Router(T).HandlerFunc) !void {
+            try self.func(self.next, ctx, handler);
+        }
+    };
+}
 
-pub const Router = struct {
-    const Self = @This();
-    tree: RadixTree(std.AutoHashMap(http.Method, Handler)),
-    allocator: Allocator,
-    pub fn init(allocator: Allocator) Self {
-        return Self{
-            .tree = RadixTree(std.AutoHashMap(http.Method, Handler)).init(allocator),
-            .allocator = allocator,
+fn Handler(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        func: Router(T).HandlerFunc,
+        middleware: ?Middleware(T) = null,
+        fn init(func: Router(T).HandlerFunc) Self {
+            return Self{
+                .func = func,
+            };
+        }
+        fn exec(self: *Self, ctx: *Router(T).Context) !void {
+            if (self.middleware) |*m| try m.exec(ctx, self.func) else try self.func(ctx);
+        }
+    };
+}
+
+pub fn Router(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        pub const Context = struct {
+            const Ctx = @This();
+            allocator: Allocator,
+            shared: *T,
+            res: *http.Server.Response,
+            tree: *Tree(std.AutoHashMap(http.Method, Handler(T))),
+            params: ?std.ArrayList([]const u8),
+            fn init(allocator: Allocator, res: *http.Server.Response, shared: *T, tree: *Tree(std.AutoHashMap(http.Method, Handler(T)))) !*Ctx {
+                var ctx = try allocator.create(Ctx);
+                ctx.* = Ctx{
+                    .allocator = allocator,
+                    .res = res,
+                    .shared = shared,
+                    .tree = tree,
+                    .params = null,
+                };
+                return ctx;
+            }
+            fn deinit(self: *Ctx) void {
+                if (self.params) |p| p.deinit();
+                self.allocator.destroy(self);
+            }
+            pub fn param(self: *Ctx, key: []const u8) !?[]const u8 {
+                if (self.params == null) self.params = try self.tree.search_route(self.res.request.target);
+
+                if (self.params) |p| {
+                    var iter = std.mem.split(u8, self.res.request.target, "/");
+                    _ = iter.next();
+                    for (p.items) |path| {
+                        var now = iter.next() orelse break;
+                        if (std.mem.eql(u8, key, path)) {
+                            return now;
+                        }
+                    }
+                }
+                return null;
+            }
+
+            pub fn no_content(self: *Ctx, status: http.Status) !void {
+                self.res.status = status;
+                try self.res.do();
+            }
+
+            pub fn plain(self: *Ctx, status: http.Status, text: []const u8) !void {
+                try self.res.headers.append("Content-Type", "text/plain");
+                self.res.status = status;
+                self.res.transfer_encoding = .{ .content_length = text.len };
+                try self.res.do();
+                _ = try self.res.write(text);
+            }
+            pub fn json(self: *Ctx, status: http.Status, data: anytype) !void {
+                var string = std.ArrayList(u8).init(self.allocator);
+                defer string.deinit();
+                try std.json.stringify(data, .{}, string.writer());
+                try self.res.headers.append("Content-Type", "application/json");
+                self.res.status = status;
+                self.res.transfer_encoding = .{ .content_length = string.items.len };
+                try self.res.do();
+                _ = try self.res.write(string.items);
+            }
         };
-    }
-    pub fn deinit(self: *Self) void {
-        self.tree.deinitception();
-    }
+        pub const HandlerFunc = *const fn (ctx: *Context) anyerror!void;
+        pub const MiddlewareFunc = *const fn (next: ?*Middleware(T), ctx: *Context, handler: HandlerFunc) anyerror!void;
 
-    fn add_handler(self: *Self, method: http.Method, path: []const u8, handler: HandlerFunc) !void {
-        if (self.tree.searchPtr(path)) |i| {
-            try i.put(method, Handler.init(handler));
-        } else {
-            var i = std.AutoHashMap(http.Method, Handler).init(self.allocator);
-            var h = Handler.init(handler);
-            var m1: *Middleware = try self.allocator.create(Middleware);
-            m1.* = Middleware.init(tes2);
-            h.use(m1);
-            var m2: *Middleware = try self.allocator.create(Middleware);
-            m2.* = Middleware.init(tes2);
-            h.use(m2);
-            var m3: *Middleware = try self.allocator.create(Middleware);
-            m3.* = Middleware.init(tes2);
-            h.use(m3);
-            try i.put(method, h);
-            try self.tree.insert(path, i);
+        allocator: Allocator,
+        shared: T,
+        tree: Tree(std.AutoHashMap(http.Method, Handler(T))),
+        middleware: ?Middleware(T) = null,
+        pub fn init(allocator: Allocator, shared: T) Self {
+            return Self{
+                .allocator = allocator,
+                .shared = shared,
+                .tree = Tree(std.AutoHashMap(http.Method, Handler(T))).init(allocator),
+            };
         }
-    }
-    pub fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
-        try self.add_handler(http.Method.GET, path, handler);
-    }
-    pub fn handle(self: *Self, resp: *http.Server.Response) !void {
-        if (self.tree.search(resp.request.target)) |h| {
-            if (h.getPtr(resp.request.method)) |handler| {
-                var ctx = Context{ .response = resp };
-                try handler.exec(ctx);
+        pub fn deinit(self: *Self) void {
+            self.tree.deinit_all();
+            if (self.middleware) |*m| m.deinit();
+        }
+        pub fn use(self: *Self, middleware: MiddlewareFunc) !void {
+            if (self.middleware) |*m| {
+                try m.add(middleware);
+            } else {
+                self.middleware = Middleware(T).init(self.allocator, middleware);
             }
         }
-    }
-};
 
-test "Router" {
-    const testing = std.testing;
-    const alloc = std.heap.page_allocator;
-    const talloc = testing.allocator;
-    _ = talloc;
+        pub fn add_handler(self: *Self, method: http.Method, path: []const u8, handler: HandlerFunc) !void {
+            if (self.tree.searchPtr(path)) |m| {
+                var h = Handler(T).init(handler);
+                h.middleware = self.middleware;
+                try m.put(method, h);
+            } else {
+                var m = std.AutoHashMap(http.Method, Handler(T)).init(self.allocator);
+                var h = Handler(T).init(handler);
+                h.middleware = self.middleware;
+                try m.put(method, h);
+                try self.tree.insert(path, m);
+            }
+        }
 
-    var s = http.Server.init(alloc, .{});
-    defer s.deinit();
-
-    var r = Router.init(alloc);
-    defer r.deinit();
-    try r.GET("/tes", tes);
-
-    try s.listen(try std.net.Address.parseIp("127.0.0.1", 2137));
-    var re = try s.accept(.{ .allocator = alloc });
-    defer re.deinit();
-    try re.wait();
-    try re.do();
-    try r.handle(&re);
+        pub fn handle(self: *Self, res: *http.Server.Response) !void {
+            if (self.tree.search(res.request.target)) |h| {
+                if (h.getPtr(res.request.method)) |func| {
+                    var ctx = try Context.init(self.allocator, res, &self.shared, &self.tree);
+                    defer ctx.deinit();
+                    try func.exec(ctx);
+                }
+            }
+        }
+    };
 }
 
-fn tes(ctx: Context) !void {
-    _ = ctx;
-    std.debug.print("tes2\n", .{});
-}
-
-fn tes2(next: ?*Middleware, ctx: Context, h: HandlerFunc) !void {
-    std.debug.print("tes1\n", .{});
-    if (next) |n| try n.exec(ctx, h) else try h(ctx);
-    std.debug.print("tes3\n", .{});
+fn mid(next: ?*Middleware(u32), ctx: *Router(u32).Context, handler: Router(u32).HandlerFunc) !void {
+    std.debug.print("mid1\n", .{});
+    if (next) |n| try n.exec(ctx, handler) else try handler(ctx);
+    std.debug.print("mid2\n", .{});
 }
