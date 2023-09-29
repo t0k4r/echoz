@@ -4,6 +4,7 @@ const http = std.http;
 const net = std.net;
 
 const Router = @import("./router.zig").Router;
+const Group = @import("./router.zig").Group;
 
 pub fn Echo(comptime T: type) type {
     return struct {
@@ -32,6 +33,10 @@ pub fn Echo(comptime T: type) type {
 
         fn use(self: *Self, middleware: MiddlewareFunc) !void {
             try self.router.use(middleware);
+        }
+
+        fn group(self: *Self, path: []const u8) Group(T) {
+            return self.router.group(path);
         }
 
         fn GET(self: *Self, path: []const u8, handler: HandlerFunc) !void {
@@ -70,7 +75,7 @@ pub fn Echo(comptime T: type) type {
                 try res.wait();
                 try self.router.handle(&res);
                 i += 1;
-                if (i == 3) {
+                if (i == 5) {
                     break;
                 }
             }
@@ -83,6 +88,9 @@ test "Echoz" {
     const allocator = testing.allocator;
     var e = Echo(u32).init(allocator, 2137);
     defer e.deinit();
+    var g = e.group("/xd");
+    try g.add_handler(.GET, "/plain", hplain);
+
     try e.GET("/plain", hplain);
     try e.GET("/json", hjson);
     try e.GET("/no", hno_content);
@@ -103,5 +111,5 @@ fn hno_content(ctx: *Echo(u32).Context) !void {
 
 fn hparam(ctx: *Echo(u32).Context) !void {
     var param = try ctx.param(":ok");
-    return if (param) |p| ctx.plain(.ok, p) else ctx.no_content(.ok);
+    return if (param) |p| ctx.json(.ok, .{ .param = p }) else ctx.no_content(.ok);
 }
