@@ -128,13 +128,21 @@ pub fn Group(comptime T: type) type {
         path: []const u8,
         tree: *Tree(std.AutoHashMap(http.Method, Handler(T))),
         middleware: ?Middleware(T) = null,
+        paths: std.ArrayList([]const u8),
         fn init(allocator: Allocator, path: []const u8, tree: *Tree(std.AutoHashMap(http.Method, Handler(T))), middleware: ?Middleware(T)) Self {
             return Self{
                 .allocator = allocator,
                 .path = path,
                 .tree = tree,
                 .middleware = middleware,
+                .paths = std.ArrayList([]const u8).init(allocator),
             };
+        }
+        fn deinit(self: *Self) void {
+            for (self.paths.items) |p| {
+                self.allocator.free(p);
+            }
+            self.paths.deinit();
         }
 
         pub fn use(self: *Self, middleware: Router(T).MiddlewareFunc) !void {
@@ -146,7 +154,7 @@ pub fn Group(comptime T: type) type {
         }
         pub fn add_handler(self: *Self, method: http.Method, path: []const u8, handler: Router(T).HandlerFunc) !void {
             var full = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ self.path, path });
-
+            try self.paths.append(full);
             if (self.tree.searchPtr(full)) |m| {
                 var h = Handler(T).init(handler);
                 h.middleware = self.middleware;
@@ -174,17 +182,21 @@ pub fn Router(comptime T: type) type {
         shared: T,
         tree: Tree(std.AutoHashMap(http.Method, Handler(T))),
         middleware: ?Middleware(T) = null,
+        groups: std.ArrayList(Group(T)),
 
         pub fn init(allocator: Allocator, shared: T) Self {
             return Self{
                 .allocator = allocator,
                 .shared = shared,
                 .tree = Tree(std.AutoHashMap(http.Method, Handler(T))).init(allocator),
+                .groups = std.ArrayList(Group(T)).init(allocator),
             };
         }
         pub fn deinit(self: *Self) void {
             self.tree.deinit_all();
             if (self.middleware) |*m| m.deinit();
+            for (self.groups.items) |*g| g.deinit();
+            self.groups.deinit();
         }
         pub fn use(self: *Self, middleware: MiddlewareFunc) !void {
             if (self.middleware) |*m| {
@@ -218,8 +230,10 @@ pub fn Router(comptime T: type) type {
             }
         }
 
-        pub fn group(self: *Self, path: []const u8) Group(T) {
-            return Group(T).init(self.allocator, path, &self.tree, self.middleware);
+        pub fn group(self: *Self, path: []const u8) !*Group(T) {
+            var i = self.groups.items.len;
+            try self.groups.append(Group(T).init(self.allocator, path, &self.tree, self.middleware));
+            return &self.groups.items[i];
         }
     };
 }

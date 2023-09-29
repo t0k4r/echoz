@@ -35,7 +35,7 @@ pub fn Echo(comptime T: type) type {
             try self.router.use(middleware);
         }
 
-        fn group(self: *Self, path: []const u8) Group(T) {
+        fn group(self: *Self, path: []const u8) !*Group(T) {
             return self.router.group(path);
         }
 
@@ -88,7 +88,7 @@ test "Echoz" {
     const allocator = testing.allocator;
     var e = Echo(u32).init(allocator, 2137);
     defer e.deinit();
-    var g = e.group("/xd");
+    var g = try e.group("/xd");
     try g.add_handler(.GET, "/plain", hplain);
 
     try e.GET("/plain", hplain);
