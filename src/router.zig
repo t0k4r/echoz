@@ -7,7 +7,7 @@ test "Tree" {
     _ = @import("./tree.zig");
 }
 
-fn Middleware(comptime T: type) type {
+pub fn Middleware(comptime T: type) type {
     return struct {
         const Self = @This();
         allocator: Allocator,
@@ -34,7 +34,7 @@ fn Middleware(comptime T: type) type {
             m.* = Middleware(T).init(self.allocator, middleware);
             now.next = m;
         }
-        fn exec(self: *Self, ctx: *Router(T).Context, handler: Router(T).HandlerFunc) !void {
+        pub fn exec(self: *Self, ctx: *Router(T).Context, handler: Router(T).HandlerFunc) !void {
             try self.func(self.next, ctx, handler);
         }
     };
